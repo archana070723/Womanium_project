@@ -7,64 +7,93 @@ This repository implements a **quantum version of the Galton Box (Plinko)** usin
 
 The classical Galton Box demonstrates the central limit theorem by simulating random left/right bounces of particles through pegs. This project recreates that behavior using a quantum circuit where:
 
-* Each Hadamard gate models a 50/50 quantum decision (left/right).
-* Measurement yields a histogram resembling the classical binomial distribution.
+# Quantum Galton Board (QGB) — Generalized Construction
 
-## Quantum Circuit Description
+This implementation simulates a Quantum Galton Board (QGB) inspired by the *Universal Statistical Simulator* paper. The QGB models the statistical behavior of a classical Galton board using quantum circuits. As the number of pegs increases, the output distribution of the quantum circuit approximates a binomial (→ Gaussian) distribution.
 
-* A `num_layers`-qubit quantum circuit is initialized in the \$|0\rangle^{\otimes n}\$ state.
-* Hadamard gates are applied to all qubits.
-* Each qubit is measured to produce a bitstring.
-* Repeating this experiment multiple times (shots) generates a probability histogram of outcomes.
+## 🧱 Qubit Layout
 
-## Dependencies
+For `num_pegs = n`, we use the following qubit allocation:
 
-Install the required libraries using pip:
+| Role              | Count     | Index Range                 |
+|-------------------|-----------|-----------------------------|
+| Control qubit     | 1         | `0`                         |
+| Ball wires        | `2n`      | `1` to `2n` (pairs of wires for each peg) |
+| Output wires      | `n`       | `2n+1` to `3n`              |
 
-```bash
-pip install qiskit matplotlib
+### ➕ Total qubits required:
+```
+total_wires = 1 (control) + 2n (ball/intermediate) + n (outputs) = 3n + 1
 ```
 
-## How to Run
+## 🔁 Circuit Logic (Per Peg `i`)
+
+1. **Randomize control**:
+```python
+qml.Hadamard(wires=0)
+```
+
+2. **Controlled SWAP between two ball wires**:
+```python
+wire_a = 1 + 2*i
+wire_b = wire_a + 1
+qml.ctrl(qml.SWAP, control=0)(wires=[wire_a, wire_b])
+```
+
+3. **Inverted CNOT to rebalance control**:
+```python
+qml.CNOT(wires=[wire_b, 0])
+```
+
+4. **Transfer to unique output wire**:
+```python
+wire_out = 2*num_pegs + 1 + i
+qml.SWAP(wires=[wire_b, wire_out])
+```
+
+## 📏 Measurement
+
+After running the circuit:
+```python
+qml.sample(wires=[2*num_pegs + 1 + i for i in range(num_pegs)])
+```
+
+Each shot produces a bitstring. The **Hamming weight** of this bitstring is the output bin (column), analogous to where the ball lands in the classical Galton board.
+
+## 🎯 Output Distribution
+
+The simulated output distribution approximates a **binomial distribution**, which converges to a **Gaussian distribution** for large `num_pegs`.
+
+## 📈 Example Plot
+
+We recommend plotting the Hamming weight frequencies and overlaying a Gaussian:
 
 ```python
-from qiskit import QuantumCircuit, transpile
-from qiskit_aer import AerSimulator
-from qiskit.visualization import plot_histogram
-import matplotlib.pyplot as plt
+from scipy.stats import norm
 
-def quantum_galton_box(num_layers=5, shots=2048):
-    qc = QuantumCircuit(num_layers, num_layers)
-    for i in range(num_layers):
-        qc.h(i)
-    qc.measure(range(num_layers), range(num_layers))
-    simulator = AerSimulator()
-    tqc = transpile(qc, simulator)
-    result = simulator.run(tqc, shots=shots).result()
-    counts = result.get_counts()
-    return qc, counts
+# Simulated histogram
+counts = Counter(weights)
+x_vals = sorted(counts.keys())
+simulated_probs = [counts[x] / shots for x in x_vals]
 
-qc, counts = quantum_galton_box(num_layers=5, shots=2048)
-qc.draw('mpl')
-plot_histogram(counts, title="Quantum Galton Box Output (5 Layers)")
-plt.show()
+# Gaussian overlay
+mu = expected_mean   # e.g., center around μ = 16
+sigma = sqrt(var)    # e.g., variance = 5
+x_smooth = np.linspace(min(x_vals), max(x_vals), 300)
+gaussian = norm.pdf(x_smooth, loc=mu, scale=sigma)
+gaussian /= np.sum(gaussian)
+
+# Plot
+plt.bar(x_vals, simulated_probs)
+plt.plot(x_smooth, gaussian)
 ```
 
-## Example Output
+## 🧠 Mapping to the Paper
 
-* Bitstrings such as `00000`, `01010`, `11100` appear.
-* The distribution of outputs closely resembles a binomial curve.
-
-## Extensions
-
-* Change `num_layers` to 8 or 10 to see convergence to a Gaussian.
-* Use weighted unitary rotations instead of Hadamards for biased deflection.
-* Execute the circuit on real quantum hardware (e.g., IonQ or IBMQ).
-
-## Reference
-
-* M. Carney and B. Varcoe, "Universal Statistical Simulator," arXiv:2202.01735 \[quant-ph], 2022.
-
----
-
-MIT License
+| Paper Concept                      | Circuit Action                        |
+|-----------------------------------|----------------------------------------|
+| Ball hits peg → splits            | Hadamard on control                    |
+| Peg logic                         | CSWAP + inverted CNOT + output SWAP    |
+| Output column                     | Hamming weight of output wires         |
+| Mid-circuit control randomness    | New Hadamard each round                |
+| Gaussian emerges with more pegs   | Seen in output distribution            |
