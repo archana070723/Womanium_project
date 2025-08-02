@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 Import essential modules for building circuits, simulating, visualizing, and comparing with ideal probability distributions.
 
 ⚙️ Part 2: Quantum Peg Logic
-python:
+python :
 
 def quantum_peg(qc, control, mid):
     left = mid - 1
