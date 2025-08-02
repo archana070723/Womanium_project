@@ -1,99 +1,100 @@
-# Womanium_project
-# Quantum Galton Box Simulation with Qiskit
+from qiskit import QuantumCircuit, ClassicalRegister, QuantumRegister
+from qiskit\_aer import AerSimulator
+from qiskit.visualization import plot\_histogram
+import numpy as np
+import matplotlib.pyplot as plt
+from collections import Counter
+from scipy.stats import expon, norm, entropy
 
-This repository implements a **quantum version of the Galton Box (Plinko)** using Hadamard-based quantum walks, inspired by the Universal Statistical Simulator framework proposed by Carney and Varcoe (arXiv:2202.01735).
+# Biased quantum peg to induce exponential decay
 
-## Overview
+def biased\_peg(qc, control, mid):
+left = mid - 1
+right = mid + 1
+if left != control and mid != control:
+qc.cswap(control, left, mid)  # Funnel to the left
+qc.ry(np.pi / 4, qc.qubits\[control])  # Entangle with asymmetric amplitude
+\# Skipping right cswap to favor decay toward left
 
-The classical Galton Box demonstrates the central limit theorem by simulating random left/right bounces of particles through pegs. This project recreates that behavior using a quantum circuit where:
+def generate\_exponential\_walk(n\_qubits, n\_levels, shots=8192):
+qr = QuantumRegister(n\_qubits)
+cr = ClassicalRegister(n\_qubits)
+qc = QuantumCircuit(qr, cr)
+mid = n\_qubits // 2
+control = 0
+qc.x(qr\[mid])  # Ball starts in center
+qc.h(qr\[control])  # Initial superposition on control qubit
 
-# Quantum Galton Board (QGB) — Generalized Construction
-
-This implementation simulates a Quantum Galton Board (QGB) inspired by the *Universal Statistical Simulator* paper. The QGB models the statistical behavior of a classical Galton board using quantum circuits. As the number of pegs increases, the output distribution of the quantum circuit approximates a binomial (→ Gaussian) distribution.
-
-## 🧱 Qubit Layout
-
-For `num_pegs = n`, we use the following qubit allocation:
-
-| Role              | Count     | Index Range                 |
-|-------------------|-----------|-----------------------------|
-| Control qubit     | 1         | `0`                         |
-| Ball wires        | `2n`      | `1` to `2n` (pairs of wires for each peg) |
-| Output wires      | `n`       | `2n+1` to `3n`              |
-
-### ➕ Total qubits required:
 ```
-total_wires = 1 (control) + 2n (ball/intermediate) + n (outputs) = 3n + 1
-```
+for level in range(n_levels):
+    qc.reset(qr[control])
+    qc.h(qr[control])
+    offset = mid - level
+    for i in range(level + 1):
+        if offset + 1 < n_qubits:
+            biased_peg(qc, control, offset)
+            offset += 2
 
-## 🔁 Circuit Logic (Per Peg `i`)
+qc.barrier()
+for i in range(1, n_qubits):
+    qc.measure(qr[i], cr[i])
 
-1. **Randomize control**:
-```python
-qml.Hadamard(wires=0)
-```
+sim = AerSimulator()
+result = sim.run(qc, shots=shots).result()
+counts = result.get_counts()
 
-2. **Controlled SWAP between two ball wires**:
-```python
-wire_a = 1 + 2*i
-wire_b = wire_a + 1
-qml.ctrl(qml.SWAP, control=0)(wires=[wire_a, wire_b])
-```
-
-3. **Inverted CNOT to rebalance control**:
-```python
-qml.CNOT(wires=[wire_b, 0])
-```
-
-4. **Transfer to unique output wire**:
-```python
-wire_out = 2*num_pegs + 1 + i
-qml.SWAP(wires=[wire_b, wire_out])
-```
-
-## 📏 Measurement
-
-After running the circuit:
-```python
-qml.sample(wires=[2*num_pegs + 1 + i for i in range(num_pegs)])
+plt.figure(figsize=(10, 5))
+plot_histogram(counts, title="Raw Exponential Walk Output (Layered Biased Pegs)")
+plt.tight_layout()
+plt.show()
+return counts
 ```
 
-Each shot produces a bitstring. The **Hamming weight** of this bitstring is the output bin (column), analogous to where the ball lands in the classical Galton board.
+def postprocess\_and\_plot\_exponential(counts):
+samples = \[]
+for bitstring, freq in counts.items():
+index = bitstring\[::-1].find('1')
+if index != -1:
+samples.extend(\[index] \* freq)
 
-## 🎯 Output Distribution
+```
+block_size = 8
+num_blocks = len(samples) // block_size
+block_sums = [sum(samples[i * block_size:(i + 1) * block_size]) for i in range(num_blocks)]
 
-The simulated output distribution approximates a **binomial distribution**, which converges to a **Gaussian distribution** for large `num_pegs`.
+hist = Counter(block_sums)
+x = sorted(hist)
+y = [hist[i] for i in x]
 
-## 📈 Example Plot
+scale = np.std(block_sums)
+x_smooth = np.linspace(min(x), max(x), 500)
+exponential = len(block_sums) * expon.pdf(x_smooth, scale=scale)
 
-We recommend plotting the Hamming weight frequencies and overlaying a Gaussian:
+plt.figure(figsize=(10, 5))
+plt.bar(x, y, width=0.8, alpha=0.6, label="Simulated Block Sums")
+plt.plot(x_smooth, exponential, 'r--', label="Exponential Fit")
+plt.xlabel("Block Sum")
+plt.ylabel("Frequency")
+plt.legend()
+plt.title("Exponential Walk Output vs. Ideal Exponential")
+plt.grid()
+plt.tight_layout()
+plt.show()
 
-```python
-from scipy.stats import norm
-
-# Simulated histogram
-counts = Counter(weights)
-x_vals = sorted(counts.keys())
-simulated_probs = [counts[x] / shots for x in x_vals]
-
-# Gaussian overlay
-mu = expected_mean   # e.g., center around μ = 16
-sigma = sqrt(var)    # e.g., variance = 5
-x_smooth = np.linspace(min(x_vals), max(x_vals), 300)
-gaussian = norm.pdf(x_smooth, loc=mu, scale=sigma)
-gaussian /= np.sum(gaussian)
-
-# Plot
-plt.bar(x_vals, simulated_probs)
-plt.plot(x_smooth, gaussian)
+sim = np.array([hist.get(i, 0) for i in x]) / sum(y)
+ideal = expon.pdf(x, scale=scale)
+ideal /= np.sum(ideal)
+kl = entropy(sim + 1e-12, ideal + 1e-12)
+tvd = 0.5 * np.sum(np.abs(sim - ideal))
+return kl, tvd
 ```
 
-## 🧠 Mapping to the Paper
+# Example usage
 
-| Paper Concept                      | Circuit Action                        |
-|-----------------------------------|----------------------------------------|
-| Ball hits peg → splits            | Hadamard on control                    |
-| Peg logic                         | CSWAP + inverted CNOT + output SWAP    |
-| Output column                     | Hamming weight of output wires         |
-| Mid-circuit control randomness    | New Hadamard each round                |
-| Gaussian emerges with more pegs   | Seen in output distribution            |
+if **name** == "**main**":
+layers = 4
+n\_qubits = 2 \* layers + 2
+counts\_exp = generate\_exponential\_walk(n\_qubits, layers)
+kl\_exp, tvd\_exp = postprocess\_and\_plot\_exponential(counts\_exp)
+print("KL Divergence (Exponential Walk):", kl\_exp)
+print("TVD (Exponential Walk):", tvd\_exp)
