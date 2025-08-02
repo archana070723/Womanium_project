@@ -1,121 +1,179 @@
-Quantum Galton Board – Exponential Walk Simulation
-This project implements a Quantum Galton Board (QGB) using Qiskit to simulate a biased quantum walk that approximates an exponential distribution. Inspired by classical Galton boards (used to demonstrate binomial distributions), the quantum version uses entanglement and controlled swaps to steer amplitude across qubits.
+🧠 Part 1: Imports and Setup
+python :
 
-📁 File Overview
-Hadamard_Gaussian_Analysis.py
-This script builds and simulates a quantum walk biased toward lower-indexed qubits, aiming to replicate exponential decay behavior.
+from qiskit import QuantumCircuit, ClassicalRegister, QuantumRegister
+from qiskit_aer import AerSimulator
+from qiskit.visualization import plot_histogram
+from scipy.stats import norm, expon, entropy
+import numpy as np
+import matplotlib.pyplot as plt
+Import essential modules for building circuits, simulating, visualizing, and comparing with ideal probability distributions.
 
-⚙️ Dependencies
-Make sure you have the following installed:
+⚙️ Part 2: Quantum Peg Logic
+python :
 
-bash
-Copy
-Edit
-pip install qiskit qiskit-aer matplotlib numpy scipy
-🚀 How to Run
-bash
-Copy
-Edit
-python Hadamard_Gaussian_Analysis.py
-📌 Code Walkthrough
-1. Imports
+def quantum_peg(qc, control, mid):
+    left = mid - 1
+    right = mid + 1
+    print("Quantum peg on qubits:", left, mid, right)
+    if left != control and mid != control:
+        qc.cswap(control, left, mid)   # Swap if control=1 (entangles path)
+    qc.cx(mid, control)               # Entangles mid with control
+    if mid != control and right != control:
+        qc.cswap(control, mid, right) # Another conditional path
+Implements a quantum "peg": like a pinball bumper that conditionally redirects the quantum ball left or right.
+
+cswap (Fredkin gate) swaps the two targets if the control is 1.
+
+cx (CNOT) entangles the mid qubit with the control to spread amplitude.
+
+🧱 Part 3: QGB Circuit Construction
+python :
+
+def generate_qgb_qiskit(n_qubits, n_levels, shots=8192):
+    qr = QuantumRegister(n_qubits)
+    cr = ClassicalRegister(n_qubits)
+    qc = QuantumCircuit(qr, cr)
+Creates n_qubits quantum + classical registers and initializes the circuit.
+
+python :
+
+    mid = n_qubits // 2
+    qc.x(qr[mid])  # Ball starts in center
+    qc.h(qr[0])    # Control qubit is placed in superposition
+Initialize the "ball" at the center qubit.
+
+The control qubit (index 0) gets a Hadamard to spread amplitudes.
+
+🔁 Part 4: Apply Layers of Pegs
+python :
+
+    for j in range(n_levels):
+        mid2 = mid
+        print("For level=", j)
+        control = 0
+Each level represents a layer of pegs (like rows in Galton board).
+
+python :
+
+        if j == 0:
+            quantum_peg(qc, control, mid)
+At the first level, apply peg only at the center.
+
+python :
+
+        else:
+            qc.reset(qr[control])
+            qc.h(qr[control])  # Recreate superposition
+            mid2 = mid2 - j
+For subsequent layers, reset control and spread it again.
+
+python :
+
+            for i in range(j + 1):
+                rightmost = mid2 + 1
+                if mid2 - 1 != 0 and mid2 + 1 != n_qubits:
+                    print("mid2=", mid2)
+                    quantum_peg(qc, control, mid2)
+                    if i != j:
+                        qc.cx(qr[rightmost], qr[control])
+                    mid2 = mid2 + 2
+Loop through all peg positions in current level.
+
+After each peg, connect control with upcoming pegs (for propagation).
+
+Shifts mid2 by 2 to space the pegs symmetrically.
+
+📏 Part 5: Measurement and Execution
+python :
+
+    qc.barrier()
+    for i in range(1, n_qubits):
+        qc.measure(qr[i], cr[i])
+Adds a barrier for circuit clarity and then measures all non-control qubits.
+
+python :
+
+    print(qc.draw())
+    sim = AerSimulator()
+    job = sim.run(qc, shots=shots)
+    result = job.result()
+    counts = result.get_counts()
+Runs the simulation on Aer and returns the measurement outcomes.
+
+python :
+
+    plt.figure(figsize=(10, 5))
+    plot_histogram(counts, title="Raw QGB Measurement Counts")
+    plt.show()
+    return counts
+Plots the raw histogram of outcomes before postprocessing.
+
+🧮 Part 6: Result Postprocessing
+(A) Direct distribution comparison
+python :
+
+def process_results(counts, dist_type="gaussian"):
+Processes histogram against a target distribution: Gaussian or Exponential.
+
+python :
+
+    keys = list(counts.keys())
+    values = [int(k, 2) for k in keys]
+    total = sum(counts.values())
+    normalized_sim = {int(k, 2): v / total for k, v in counts.items()}
+Convert bitstrings to integers and normalize the histogram.
+
+python :
+
+    x = np.arange(min(values), max(values)+1)
+Define the range of expected output.
+
+python :
+
+    if dist_type == "gaussian":
+        mu, sigma = 16, np.sqrt(5)
+        ideal = norm.pdf(x, mu, sigma)
+    elif dist_type == "exponential":
+        ideal = expon.pdf(x, scale=4)
+    else:
+        ideal = np.ones_like(x) / len(x)
+Set the ideal distribution for comparison.
+
+python :
+
+    sim = np.array([normalized_sim.get(i, 0) for i in x])
+    kl = entropy(sim + 1e-12, ideal + 1e-12)
+    tvd = 0.5 * np.sum(np.abs(sim - ideal))
+Compute KL divergence and Total Variation Distance.
+
+🔧 Part 7: Block Sum Postprocessing
 python
-Copy
-Edit
-from qiskit import ...
-Qiskit: For quantum circuit construction and simulation.
 
-NumPy & SciPy: Math tools for processing and distribution fitting.
+def process_and_plot_blocked(counts, dist_type="gaussian"):
+Group outcomes into blocks of 8 and sum their indices.
 
-Matplotlib: Visualization.
-
-Counter: Tallying outcomes.
-
-2. Quantum Peg Logic
 python
-Copy
-Edit
-def biased_peg(qc, control, mid):
-Implements a single biased "peg" unit:
 
-cswap: Swaps amplitude between mid and left to encourage leftward bias.
+    for s in strings:
+        index = s[::-1].find('1')
+        remapped.append(index if index != -1 else 4)
+Convert 1-hot outcomes into positions (e.g., output qubit index with '1').
 
-ry: Applies a rotation to make the split uneven → more amplitude goes left.
-
-3. Circuit Construction
 python
-Copy
-Edit
-def generate_exponential_walk(n_qubits, n_levels, shots=8192):
-Steps:
-Initialize a circuit with n_qubits.
 
-qc.x(qr[mid]): Starts the ball at the center.
+    blocks = [sum(remapped[i:i+8]) for i in range(0, len(remapped), 8) if len(remapped[i:i+8]) == 8]
+Sum groups of 8 outcomes to mimic classical distribution.
 
-qc.h(qr[0]): Superposition on control qubit.
+python :
 
-Loop through n_levels (layers):
+    plt.bar(x_vals, sim, label="QGB Simulated", alpha=0.6)
+    plt.plot(x_vals, ideal, label=f"Ideal {dist_type.title()} Distribution", color="r", linestyle="--")
+Plot histogram and ideal distribution overlay.
 
-Each layer resets and re-prepares the control.
-
-Pegs are placed at different positions across the layer.
-
-Amplitude is funneled leftward to simulate exponential decay.
-
-Measure all position qubits (qubits 1 to end).
-
-4. Simulation and Raw Output
+🧪 Final Run
 python
-Copy
-Edit
-sim = AerSimulator()
-result = sim.run(qc).result()
-counts = result.get_counts()
-Circuit is simulated using Qiskit's noiseless AerSimulator.
-
-Output is shown as a histogram of bitstrings indicating where the "ball" landed.
-
-5. Postprocessing
-python
-Copy
-Edit
-def postprocess_and_plot_exponential(counts):
-Decode bitstrings to find where the ball landed (based on 1-hot position).
-
-Group into blocks of 8 to reduce variance and better observe trends.
-
-Fit to an exponential distribution using SciPy.
-
-Compute KL Divergence and Total Variation Distance (TVD) for accuracy.
-
-📊 Output
-The script generates two main plots:
-
-Raw QGB Output Histogram (bitstring counts).
-
-Block-Summed Histogram vs. Ideal Exponential (with fitted curve).
-
-📈 Metrics
-To evaluate how closely the simulation resembles exponential decay:
-
-KL Divergence: Measures information loss between simulation and ideal.
-
-TVD: Measures maximum difference between the two distributions.
-
-📚 Notes
-The quantum circuit is composed of layered biased pegs to mimic exponential bias.
-
-Controlled-swap (CSWAP) and RY gates control directionality and entanglement.
-
-The simulation mimics multiple passes through pegs just like classical balls falling in a board.
-
-📌 Example Usage Output
-bash
-Copy
-Edit
-KL Divergence (Exponential Walk): 0.037
-TVD (Exponential Walk): 0.118
-📦 Author Notes
-This is part of a broader exploration of QGB variants, including Gaussian and Hadamard walks.
-
-Contributions welcome for improving noise robustness and implementing real-device backends.
+layers = 4
+n_qubits = 2 * layers + 2
+counts = generate_qgb_qiskit(n_qubits, layers)
+Use 4 layers (total 10 qubits) and simulate the QGB.
