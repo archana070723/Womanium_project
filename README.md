@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 Import essential modules for building circuits, simulating, visualizing, and comparing with ideal probability distributions.
 
 ⚙️ Part 2: Quantum Peg Logic
-python :
+python:
 
 def quantum_peg(qc, control, mid):
     left = mid - 1
@@ -21,6 +21,8 @@ def quantum_peg(qc, control, mid):
     qc.cx(mid, control)               # Entangles mid with control
     if mid != control and right != control:
         qc.cswap(control, mid, right) # Another conditional path
+
+        
 Implements a quantum "peg": like a pinball bumper that conditionally redirects the quantum ball left or right.
 
 cswap (Fredkin gate) swaps the two targets if the control is 1.
